@@ -12,6 +12,7 @@ from OAI.types.chat_completion import (
 )
 from OAI.types.completion import CompletionResponse, CompletionRespChoice
 from OAI.types.common import UsageStats
+from OAI.types.embeddings import Embedding, EmbeddingsResponse
 from OAI.types.lora import LoraList, LoraCard
 from OAI.types.model import ModelList, ModelCard
 
@@ -82,6 +83,12 @@ def create_chat_completion_stream_chunk(
     )
 
     return chunk
+
+def create_embedding_response(embeddings: List[float], model_name):
+    return EmbeddingsResponse(
+            data = [Embedding(embedding=embedding, index=i) for i, embedding in enumerate(embeddings)],
+            model = model_name
+            )
 
 
 def get_model_list(model_path: pathlib.Path, draft_model_path: Optional[str] = None):

@@ -38,8 +38,10 @@ from common.templating import (
 )
 from common.utils import get_generator_error, get_sse_packet, load_progress, unwrap
 from common.logger import init_logger
+from embedding_model import EmbeddingModelContainer
 from OAI.types.completion import CompletionRequest
 from OAI.types.chat_completion import ChatCompletionRequest
+from OAI.types.embeddings import EmbeddingsRequest, EmbeddingsResponse
 from OAI.types.lora import LoraCard, LoraList, LoraLoadRequest, LoraLoadResponse
 from OAI.types.model import (
     ModelCard,
@@ -76,10 +78,16 @@ app = FastAPI(
 
 # Globally scoped variables. Undefined until initalized in main
 MODEL_CONTAINER: Optional[ExllamaV2Container] = None
+EMBEDDING_MODEL_CONTAINER: Optional[EmbeddingModelContainer] = None
 
 
 def _check_model_container():
     if MODEL_CONTAINER is None or MODEL_CONTAINER.model is None:
+        raise HTTPException(400, "No models are loaded.")
+
+
+def _check_embedding_model_container():
+    if EMBEDDING_MODEL_CONTAINER is None or EMBEDDING_MODEL_CONTAINER.model is None:
         raise HTTPException(400, "No models are loaded.")
 
 
@@ -574,9 +582,26 @@ async def generate_chat_completion(request: Request, data: ChatCompletionRequest
     return response
 
 
+@app.post(
+    "/v1/embeddings",
+    dependencies=[Depends(check_api_key), Depends(_check_embedding_model_container)],
+    response_model=EmbeddingsResponse,
+)
+async def get_embeddings(request: EmbeddingsRequest):
+    """Gives Embeddings for the input texts"""
+    sentences = request.input if isinstance(request.input, list) else [request.input]
+    embeddings = EMBEDDING_MODEL_CONTAINER.get_embeddings(sentences)
+    return create_embedding_response(embeddings,
+                                     EMBEDDING_MODEL_CONTAINER.get_model_name(),
+                                     )
+
+
+
+
 def entrypoint(args: Optional[dict] = None):
     """Entry function for program startup"""
     global MODEL_CONTAINER
+    global EMBEDDING_MODEL_CONTAINER
 
     # Load from YAML config
     read_config_from_file(pathlib.Path("config.yml"))
@@ -643,6 +668,12 @@ def entrypoint(args: Optional[dict] = None):
     logger.info(f"Developer documentation: http://{host}:{port}/docs")
     logger.info(f"Completions: http://{host}:{port}/v1/completions")
     logger.info(f"Chat completions: http://{host}:{port}/v1/chat/completions")
+    embedding_model_name = model_config.get("embedding_model_name")
+    if embedding_model_name:
+        EMBEDDING_MODEL_CONTAINER = EmbeddingModelContainer(
+                embedding_model_name,
+                model_config.get("embedding_max_len", 512)
+                )
 
     uvicorn.run(
         app,
