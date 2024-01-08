@@ -28,6 +28,7 @@ class EmbeddingModelContainer:
         with torch.no_grad():
             model_output = self.model(**encoded_input)
 
+        prompt_tokens = int(encoded_input['attention_mask'].sum())
         context_layer: "torch.Tensor" = model_output[0]
         # CLS Pooling
         if len(context_layer.shape) == 3:
@@ -36,4 +37,4 @@ class EmbeddingModelContainer:
             embeddings = context_layer[0]
         else:
             raise NotImplementedError(f"Unhandled shape {embeddings.shape}.")
-        return embeddings.tolist()
+        return embeddings.tolist(), prompt_tokens

@@ -591,9 +591,10 @@ async def generate_chat_completion(request: Request, data: ChatCompletionRequest
 async def get_embeddings(request: EmbeddingsRequest):
     """Gives Embeddings for the input texts"""
     sentences = request.input if isinstance(request.input, list) else [request.input]
-    embeddings = EMBEDDING_MODEL_CONTAINER.get_embeddings(sentences)
+    embeddings, prompt_tokens = EMBEDDING_MODEL_CONTAINER.get_embeddings(sentences)
     return create_embedding_response(embeddings,
                                      EMBEDDING_MODEL_CONTAINER.get_model_name(),
+                                     prompt_tokens,
                                      )
 
 

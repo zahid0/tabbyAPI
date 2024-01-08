@@ -84,14 +84,14 @@ def create_chat_completion_stream_chunk(
 
     return chunk
 
-def create_embedding_response(embeddings: list[float], model_name):
+def create_embedding_response(embeddings: list[float], model_name, prompt_tokens: int):
     return EmbeddingsResponse(
             data = [Embedding(embedding=embedding, index=i) for i, embedding in enumerate(embeddings)],
             model = model_name,
             usage=UsageStats(
-                prompt_tokens=0,
+                prompt_tokens=prompt_tokens,
                 completion_tokens=0,
-                total_tokens=0,
+                total_tokens=prompt_tokens,
                 ),
             )
 
