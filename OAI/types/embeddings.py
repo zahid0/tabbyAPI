@@ -2,6 +2,7 @@ from typing import List, Union
 
 from pydantic import BaseModel
 
+from OAI.types.common import UsageStats
 
 class EmbeddingsRequest(BaseModel):
     input: Union[str, List[str]]
@@ -19,3 +20,4 @@ class EmbeddingsResponse(BaseModel):
     object: str = "list"
     data: List[Embedding]
     model: str
+    usage: Optional[UsageStats] = None
