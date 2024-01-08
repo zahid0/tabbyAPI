@@ -63,6 +63,7 @@ from OAI.utils_oai import (
     get_lora_list,
     create_chat_completion_response,
     create_chat_completion_stream_chunk,
+    create_embedding_response,
 )
 
 logger = init_logger(__name__)
