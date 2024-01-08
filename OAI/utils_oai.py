@@ -87,7 +87,7 @@ def create_chat_completion_stream_chunk(
 def create_embedding_response(embeddings: list[float], model_name):
     return EmbeddingsResponse(
             data = [Embedding(embedding=embedding, index=i) for i, embedding in enumerate(embeddings)],
-            model = model_name
+            model = model_name,
             usage=UsageStats(
                 prompt_tokens=0,
                 completion_tokens=0,
