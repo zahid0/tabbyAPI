@@ -1,5 +1,8 @@
 import torch
 from transformers import AutoModel, AutoTokenizer
+from logger import init_logger
+
+logger = init_logger(__name__)
 
 
 class EmbeddingModelContainer:
@@ -29,6 +32,9 @@ class EmbeddingModelContainer:
             model_output = self.model(**encoded_input)
 
         prompt_tokens = int(encoded_input['attention_mask'].sum())
+        number_of_inputs = len(encoded_input['attention_mask'])
+        tokens_per_inputs = [int(mask.sum()) for mask in encoded_input['attention_mask']]
+        logger.info(f"Embedding: {number_of_inputs} inputs with {' + '.join([str(i) for i in tokens_per_inputs])} = {prompt_tokens} tokens")
         context_layer: "torch.Tensor" = model_output[0]
         # CLS Pooling
         if len(context_layer.shape) == 3:
