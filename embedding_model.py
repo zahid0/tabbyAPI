@@ -43,4 +43,5 @@ class EmbeddingModelContainer:
             embeddings = context_layer[0]
         else:
             raise NotImplementedError(f"Unhandled shape {embeddings.shape}.")
+        embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         return embeddings.tolist(), prompt_tokens
