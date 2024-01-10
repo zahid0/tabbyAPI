@@ -6,8 +6,8 @@ from OAI.types.common import UsageStats
 
 class EmbeddingsRequest(BaseModel):
     input: Union[str, List[str]]
-    model: str
-    encoding_format: str
+    model: Optional[str] = "mymodel"
+    encoding_format: Optional[str] = "float"
 
 
 class Embedding(BaseModel):
