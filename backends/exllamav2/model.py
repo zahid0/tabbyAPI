@@ -554,7 +554,7 @@ class ExllamaV2Container:
                     (default: same as range)
                 'stop' (List[Union[str, int]]): List of stop strings/tokens to
                     end response (default: [EOS])
-                'max_tokens' (int): Max no. tokens in response (default: 150)
+                'max_tokens' (int): Max no. tokens in response (default: 4096)
                 'add_bos_token' (bool): Adds the BOS token to the start of the
                     prompt (default: True)
                 'ban_eos_token' (bool): Bans the EOS token from generation
@@ -570,7 +570,7 @@ class ExllamaV2Container:
         """
 
         token_healing = unwrap(kwargs.get("token_healing"), False)
-        max_tokens = unwrap(kwargs.get("max_tokens"), 150)
+        max_tokens = unwrap(kwargs.get("max_tokens"), 4096)
         stream_interval = unwrap(kwargs.get("stream_interval"), 0)
         generate_window = max(
             unwrap(kwargs.get("generate_window"), 512), max_tokens // 8
