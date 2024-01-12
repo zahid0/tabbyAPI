@@ -71,10 +71,10 @@ class ChatCompletionRequest(CommonCompletionRequest):
     # Messages
     # Take in a string as well even though it's not part of the OAI spec
     messages: Union[str, List[Dict[str, str]]]
-    functions: Optional[List[ChatCompletionFunction]]
-    function_call: Optional[ChatCompletionRequestFunctionCall]
-    tools: Optional[List[ChatCompletionTool]]
-    tool_choice: Optional[ChatCompletionToolChoiceOption]
+    # functions: Optional[List[ChatCompletionFunction]]
+    # function_call: Optional[ChatCompletionRequestFunctionCall]
+    # tools: Optional[List[ChatCompletionTool]]
+    # tool_choice: Optional[ChatCompletionToolChoiceOption]
     prompt_template: Optional[str] = None
     add_generation_prompt: Optional[bool] = True
 
