@@ -28,7 +28,7 @@ class ChatCompletionStreamChoice(BaseModel):
 class ChatCompletionFunction(BaseModel):
     name: str
     description: Optional[str]
-    parameters: Dict[str, JsonType]  # TODO: make this more specific
+    parameters: Dict[str, Any]  # TODO: make this more specific
 
 
 class ChatCompletionRequestFunctionCallOption(BaseModel):
