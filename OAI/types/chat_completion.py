@@ -70,7 +70,7 @@ ChatCompletionToolChoiceOption = Union[
 class ChatCompletionRequest(CommonCompletionRequest):
     # Messages
     # Take in a string as well even though it's not part of the OAI spec
-    messages: Union[str, List[Dict[str, str]]]
+    messages: Union[str, List[Dict[str, Any]]]
     functions: Optional[List[ChatCompletionFunction]] = []
     function_call: Optional[ChatCompletionRequestFunctionCall] = None
     tools: Optional[List[ChatCompletionTool]] = []
