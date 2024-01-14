@@ -81,12 +81,19 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    exc_str = f'{exc}'.replace('\n', ' ').replace('   ', ' ')
-    logger.error(f'ERROR validating request - {exc_str}')
+    logger.error(f"Request Body: {exc.body}")
+    for err in exc.errors():
+        try:
+            logger.error(
+                f"Validation error:{err['type']}:{err['msg']} at '{'.'.join(err['loc'][1:])}'"
+            )
+        except:
+            logger.error(err)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content=jsonable_encoder({"detail": exc_str}),
+        content=jsonable_encoder({"errors": exc.errors()}),
     )
+
 
 # Globally scoped variables. Undefined until initalized in main
 MODEL_CONTAINER: Optional[ExllamaV2Container] = None
