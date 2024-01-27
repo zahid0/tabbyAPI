@@ -1,6 +1,6 @@
 import torch
 from transformers import AutoModel, AutoTokenizer
-from logger import init_logger
+from common.logger import init_logger
 
 logger = init_logger(__name__)
 
