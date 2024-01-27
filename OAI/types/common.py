@@ -51,3 +51,4 @@ class CommonCompletionRequest(SamplerParams):
 
     # Generation info (remainder is in SamplerParams superclass)
     stream: Optional[bool] = False
+    max_tokens: Optional[int] = 4096
