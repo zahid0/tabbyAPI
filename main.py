@@ -5,16 +5,20 @@ from asyncio import CancelledError
 from typing import Optional
 from uuid import uuid4
 from jinja2 import TemplateError
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from functools import partial
 from progress.bar import IncrementalBar
 
-import gen_logging
-from args import convert_args_to_dict, init_argparser
-from auth import check_admin_key, check_api_key, load_auth_keys
-from config import (
+import common.gen_logging as gen_logging
+from backends.exllamav2.model import ExllamaV2Container
+from common.args import convert_args_to_dict, init_argparser
+from common.auth import check_admin_key, check_api_key, load_auth_keys
+from common.config import (
+    get_sampling_config,
     override_config_from_args,
     read_config_from_file,
     get_gen_logging_config,
@@ -23,10 +27,23 @@ from config import (
     get_lora_config,
     get_network_config,
 )
-from generators import call_with_semaphore, generate_with_semaphore
-from model import ModelContainer
+from common.generators import call_with_semaphore, generate_with_semaphore
+from common.sampling import (
+    get_sampler_overrides,
+    set_overrides_from_file,
+    set_overrides_from_dict,
+)
+from common.templating import (
+    get_all_templates,
+    get_prompt_from_template,
+    get_template_from_file,
+)
+from common.utils import get_generator_error, get_sse_packet, load_progress, unwrap
+from common.logger import init_logger
+from embedding_model import EmbeddingModelContainer
 from OAI.types.completion import CompletionRequest
 from OAI.types.chat_completion import ChatCompletionRequest
+from OAI.types.embeddings import EmbeddingsRequest, EmbeddingsResponse
 from OAI.types.lora import LoraCard, LoraList, LoraLoadRequest, LoraLoadResponse
 from OAI.types.model import (
     ModelCard,
@@ -34,7 +51,8 @@ from OAI.types.model import (
     ModelLoadResponse,
     ModelCardParameters,
 )
-from OAI.types.template import TemplateList
+from OAI.types.sampler_overrides import SamplerOverrideSwitchRequest
+from OAI.types.template import TemplateList, TemplateSwitchRequest
 from OAI.types.token import (
     TokenEncodeRequest,
     TokenEncodeResponse,
@@ -47,10 +65,8 @@ from OAI.utils_oai import (
     get_lora_list,
     create_chat_completion_response,
     create_chat_completion_stream_chunk,
+    create_embedding_response,
 )
-from templating import get_all_templates, get_prompt_from_template
-from utils import get_generator_error, get_sse_packet, load_progress, unwrap
-from logger import init_logger
 
 logger = init_logger(__name__)
 
@@ -63,12 +79,34 @@ app = FastAPI(
     ),
 )
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Request Body: {exc.body}")
+    for err in exc.errors():
+        try:
+            logger.error(
+                f"Validation error:{err['type']}:{err['msg']} at '{'.'.join(err['loc'][1:])}'"
+            )
+        except:
+            logger.error(err)
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=jsonable_encoder({"errors": exc.errors()}),
+    )
+
+
 # Globally scoped variables. Undefined until initalized in main
-MODEL_CONTAINER: Optional[ModelContainer] = None
+MODEL_CONTAINER: Optional[ExllamaV2Container] = None
+EMBEDDING_MODEL_CONTAINER: Optional[EmbeddingModelContainer] = None
 
 
 def _check_model_container():
     if MODEL_CONTAINER is None or MODEL_CONTAINER.model is None:
+        raise HTTPException(400, "No models are loaded.")
+
+
+def _check_embedding_model_container():
+    if EMBEDDING_MODEL_CONTAINER is None or EMBEDDING_MODEL_CONTAINER.model is None:
         raise HTTPException(400, "No models are loaded.")
 
 
@@ -182,7 +220,7 @@ async def load_model(request: Request, data: ModelLoadRequest):
     if not model_path.exists():
         raise HTTPException(400, "model_path does not exist. Check model_name?")
 
-    MODEL_CONTAINER = ModelContainer(model_path.resolve(), False, **load_data)
+    MODEL_CONTAINER = ExllamaV2Container(model_path.resolve(), False, **load_data)
 
     async def generator():
         """Generator for the loading process."""
@@ -254,6 +292,73 @@ async def get_templates():
     templates = get_all_templates()
     template_strings = list(map(lambda template: template.stem, templates))
     return TemplateList(data=template_strings)
+
+
+@app.post(
+    "/v1/template/switch",
+    dependencies=[Depends(check_admin_key), Depends(_check_model_container)],
+)
+async def switch_template(data: TemplateSwitchRequest):
+    """Switch the currently loaded template"""
+    if not data.name:
+        raise HTTPException(400, "New template name not found.")
+
+    try:
+        template = get_template_from_file(data.name)
+        MODEL_CONTAINER.prompt_template = template
+    except FileNotFoundError as e:
+        raise HTTPException(400, "Template does not exist. Check the name?") from e
+
+
+@app.post(
+    "/v1/template/unload",
+    dependencies=[Depends(check_admin_key), Depends(_check_model_container)],
+)
+async def unload_template():
+    """Unloads the currently selected template"""
+
+    MODEL_CONTAINER.prompt_template = None
+
+
+# Sampler override endpoints
+@app.get("/v1/sampling/overrides", dependencies=[Depends(check_api_key)])
+@app.get("/v1/sampling/override/list", dependencies=[Depends(check_api_key)])
+async def list_sampler_overrides():
+    """API wrapper to list all currently applied sampler overrides"""
+
+    return get_sampler_overrides()
+
+
+@app.post(
+    "/v1/sampling/override/switch",
+    dependencies=[Depends(check_admin_key)],
+)
+async def switch_sampler_override(data: SamplerOverrideSwitchRequest):
+    """Switch the currently loaded override preset"""
+
+    if data.preset:
+        try:
+            set_overrides_from_file(data.preset)
+        except FileNotFoundError as e:
+            raise HTTPException(
+                400, "Sampler override preset does not exist. Check the name?"
+            ) from e
+    elif data.overrides:
+        set_overrides_from_dict(data.overrides)
+    else:
+        raise HTTPException(
+            400, "A sampler override preset or dictionary wasn't provided."
+        )
+
+
+@app.post(
+    "/v1/sampling/override/unload",
+    dependencies=[Depends(check_admin_key)],
+)
+async def unload_sampler_override():
+    """Unloads the currently selected override preset"""
+
+    set_overrides_from_dict({})
 
 
 # Lora list endpoint
@@ -496,9 +601,27 @@ async def generate_chat_completion(request: Request, data: ChatCompletionRequest
     return response
 
 
+@app.post(
+    "/v1/embeddings",
+    dependencies=[Depends(check_api_key), Depends(_check_embedding_model_container)],
+    response_model=EmbeddingsResponse,
+)
+async def get_embeddings(request: EmbeddingsRequest):
+    """Gives Embeddings for the input texts"""
+    sentences = request.input if isinstance(request.input, list) else [request.input]
+    embeddings, prompt_tokens = EMBEDDING_MODEL_CONTAINER.get_embeddings(sentences)
+    return create_embedding_response(embeddings,
+                                     EMBEDDING_MODEL_CONTAINER.get_model_name(),
+                                     prompt_tokens,
+                                     )
+
+
+
+
 def entrypoint(args: Optional[dict] = None):
     """Entry function for program startup"""
     global MODEL_CONTAINER
+    global EMBEDDING_MODEL_CONTAINER
 
     # Load from YAML config
     read_config_from_file(pathlib.Path("config.yml"))
@@ -522,6 +645,15 @@ def entrypoint(args: Optional[dict] = None):
 
     gen_logging.broadcast_status()
 
+    # Set sampler parameter overrides if provided
+    sampling_config = get_sampling_config()
+    sampling_override_preset = sampling_config.get("override_preset")
+    if sampling_override_preset:
+        try:
+            set_overrides_from_file(sampling_override_preset)
+        except FileNotFoundError as e:
+            logger.warning(str(e))
+
     # If an initial model name is specified, create a container
     # and load the model
     model_config = get_model_config()
@@ -530,7 +662,9 @@ def entrypoint(args: Optional[dict] = None):
         model_path = pathlib.Path(unwrap(model_config.get("model_dir"), "models"))
         model_path = model_path / model_name
 
-        MODEL_CONTAINER = ModelContainer(model_path.resolve(), False, **model_config)
+        MODEL_CONTAINER = ExllamaV2Container(
+            model_path.resolve(), False, **model_config
+        )
         load_status = MODEL_CONTAINER.load_gen(load_progress)
         for module, modules in load_status:
             if module == 0:
@@ -547,10 +681,24 @@ def entrypoint(args: Optional[dict] = None):
             lora_dir = pathlib.Path(unwrap(lora_config.get("lora_dir"), "loras"))
             MODEL_CONTAINER.load_loras(lora_dir.resolve(), **lora_config)
 
+    host = unwrap(network_config.get("host"), "127.0.0.1")
+    port = unwrap(network_config.get("port"), 5000)
+
+    # TODO: Move OAI API to a separate folder
+    logger.info(f"Developer documentation: http://{host}:{port}/docs")
+    logger.info(f"Completions: http://{host}:{port}/v1/completions")
+    logger.info(f"Chat completions: http://{host}:{port}/v1/chat/completions")
+    embedding_model_name = model_config.get("embedding_model_name")
+    if embedding_model_name:
+        EMBEDDING_MODEL_CONTAINER = EmbeddingModelContainer(
+                embedding_model_name,
+                model_config.get("embedding_max_len", 512)
+                )
+
     uvicorn.run(
         app,
-        host=network_config.get("host", "127.0.0.1"),
-        port=network_config.get("port", 5000),
+        host=host,
+        port=port,
         log_level="debug",
     )
 

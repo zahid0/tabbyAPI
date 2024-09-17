@@ -13,17 +13,17 @@ from exllamav2 import (
     ExLlamaV2Lora,
 )
 from exllamav2.generator import ExLlamaV2StreamingGenerator, ExLlamaV2Sampler
-
-from gen_logging import log_generation_params, log_prompt, log_response
 from typing import List, Optional, Union
-from templating import (
+
+from common.gen_logging import log_generation_params, log_prompt, log_response
+from common.templating import (
     PromptTemplate,
     find_template_from_model,
     get_template_from_model_json,
     get_template_from_file,
 )
-from utils import coalesce, unwrap
-from logger import init_logger
+from common.utils import coalesce, unwrap
+from common.logger import init_logger
 
 logger = init_logger(__name__)
 
@@ -31,7 +31,7 @@ logger = init_logger(__name__)
 AUTO_SPLIT_RESERVE_BYTES = 96 * 1024**2
 
 
-class ModelContainer:
+class ExllamaV2Container:
     """The model container class for ExLlamaV2 models."""
 
     config: Optional[ExLlamaV2Config] = None
@@ -138,11 +138,23 @@ class ModelContainer:
             kwargs.get("rope_alpha"), self.calculate_rope_alpha(base_seq_len)
         )
 
+        # Enable CFG if present
+        use_cfg = unwrap(kwargs.get("use_cfg"), False)
         if hasattr(ExLlamaV2Sampler.Settings, "cfg_scale"):
-            self.use_cfg = unwrap(kwargs.get("use_cfg"), False)
-        else:
+            self.use_cfg = use_cfg
+        elif use_cfg:
             logger.warning(
                 "CFG is not supported by the currently installed ExLlamaV2 version."
+            )
+
+        # Enable fasttensors loading if present
+        use_fasttensors = unwrap(kwargs.get("fasttensors"), False)
+        if hasattr(ExLlamaV2Config, "fasttensors"):
+            self.config.fasttensors = use_fasttensors
+        elif use_fasttensors:
+            logger.warning(
+                "fasttensors is not supported by "
+                "the currently installed ExllamaV2 version."
             )
 
         # Turn off flash attention if CFG is on
@@ -158,35 +170,10 @@ class ModelContainer:
             self.config.set_low_mem()
         """
 
-        # Set prompt template override if provided
-        prompt_template_name = kwargs.get("prompt_template")
-        if prompt_template_name:
-            logger.info("Loading prompt template with name " f"{prompt_template_name}")
-            # Read the template
-            self.prompt_template = get_template_from_file(prompt_template_name)
-        else:
-            # Then try finding the template from the tokenizer_config.json
-            self.prompt_template = get_template_from_model_json(
-                pathlib.Path(self.config.model_dir) / "tokenizer_config.json",
-                "chat_template",
-                "from_tokenizer_config",
-            )
-
-            # Try finding the chat template from the model's config.json
-            # TODO: This may not even be used with huggingface models,
-            # mark for removal.
-            if self.prompt_template is None:
-                self.prompt_template = get_template_from_model_json(
-                    pathlib.Path(self.config.model_config),
-                    "chat_template",
-                    "from_model_config",
-                )
-
-            # If that fails, attempt fetching from model name
-            if self.prompt_template is None:
-                template_match = find_template_from_model(model_directory)
-                if template_match:
-                    self.prompt_template = get_template_from_file(template_match)
+        # Try to set prompt template
+        self.prompt_template = self.find_prompt_template(
+            kwargs.get("prompt_template"), model_directory
+        )
 
         # Catch all for template lookup errors
         if self.prompt_template:
@@ -252,6 +239,34 @@ class ModelContainer:
             if "chunk_size" in kwargs:
                 self.draft_config.max_input_len = kwargs["chunk_size"]
                 self.draft_config.max_attn_size = kwargs["chunk_size"] ** 2
+
+    def find_prompt_template(self, prompt_template_name, model_directory):
+        """Tries to find a prompt template using various methods"""
+
+        logger.info("Attempting to load a prompt template if present.")
+
+        find_template_functions = [
+            lambda: get_template_from_model_json(
+                pathlib.Path(self.config.model_dir) / "tokenizer_config.json",
+                "chat_template",
+                "from_tokenizer_config",
+            ),
+            lambda: get_template_from_file(find_template_from_model(model_directory)),
+        ]
+
+        # Add lookup from prompt template name if provided
+        if prompt_template_name:
+            find_template_functions.insert(
+                0, lambda: get_template_from_file(prompt_template_name)
+            )
+
+        for func in find_template_functions:
+            try:
+                prompt_template = func()
+                if prompt_template is not None:
+                    return prompt_template
+            except (FileNotFoundError, LookupError):
+                continue
 
     def calculate_rope_alpha(self, base_seq_len):
         """Calculate the rope alpha value for a given sequence length."""
@@ -539,7 +554,7 @@ class ModelContainer:
                     (default: same as range)
                 'stop' (List[Union[str, int]]): List of stop strings/tokens to
                     end response (default: [EOS])
-                'max_tokens' (int): Max no. tokens in response (default: 150)
+                'max_tokens' (int): Max no. tokens in response (default: 4096)
                 'add_bos_token' (bool): Adds the BOS token to the start of the
                     prompt (default: True)
                 'ban_eos_token' (bool): Bans the EOS token from generation
@@ -555,9 +570,11 @@ class ModelContainer:
         """
 
         token_healing = unwrap(kwargs.get("token_healing"), False)
-        max_tokens = unwrap(kwargs.get("max_tokens"), 150)
+        max_tokens = unwrap(kwargs.get("max_tokens"), 4096)
         stream_interval = unwrap(kwargs.get("stream_interval"), 0)
-        generate_window = min(unwrap(kwargs.get("generate_window"), 512), max_tokens)
+        generate_window = max(
+            unwrap(kwargs.get("generate_window"), 512), max_tokens // 8
+        )
 
         # Sampler settings
         gen_settings = ExLlamaV2Sampler.Settings()
@@ -663,6 +680,7 @@ class ModelContainer:
             **vars(gen_settings),
             token_healing=token_healing,
             auto_scale_penalty_range=auto_scale_penalty_range,
+            generate_window=generate_window,
             add_bos_token=add_bos_token,
             ban_eos_token=ban_eos_token,
             stop_conditions=stop_conditions,

@@ -2,6 +2,7 @@
 import pathlib
 from typing import Optional
 
+from common.utils import unwrap
 from OAI.types.chat_completion import (
     ChatCompletionMessage,
     ChatCompletionRespChoice,
@@ -11,10 +12,9 @@ from OAI.types.chat_completion import (
 )
 from OAI.types.completion import CompletionResponse, CompletionRespChoice
 from OAI.types.common import UsageStats
+from OAI.types.embeddings import Embedding, EmbeddingsResponse
 from OAI.types.lora import LoraList, LoraCard
 from OAI.types.model import ModelList, ModelCard
-
-from utils import unwrap
 
 
 def create_completion_response(
@@ -83,6 +83,17 @@ def create_chat_completion_stream_chunk(
     )
 
     return chunk
+
+def create_embedding_response(embeddings: list[float], model_name, prompt_tokens: int):
+    return EmbeddingsResponse(
+            data = [Embedding(embedding=embedding, index=i) for i, embedding in enumerate(embeddings)],
+            model = model_name,
+            usage=UsageStats(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,
+                total_tokens=prompt_tokens,
+                ),
+            )
 
 
 def get_model_list(model_path: pathlib.Path, draft_model_path: Optional[str] = None):

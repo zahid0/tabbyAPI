@@ -1,8 +1,8 @@
 import yaml
 import pathlib
 
-from logger import init_logger
-from utils import unwrap
+from common.logger import init_logger
+from common.utils import unwrap
 
 logger = init_logger(__name__)
 
@@ -54,6 +54,11 @@ def override_config_from_args(args: dict):
             **logging_config,
             **{k.replace("log_", ""): logging_override[k] for k in logging_override},
         }
+
+
+def get_sampling_config():
+    """Returns the sampling parameter config from the global config"""
+    return unwrap(GLOBAL_CONFIG.get("sampling"), {})
 
 
 def get_model_config():

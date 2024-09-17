@@ -1,10 +1,9 @@
 """ Contains model card types. """
+from pydantic import BaseModel, Field, ConfigDict
 from time import time
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
-
-from gen_logging import LogPreferences
+from common.gen_logging import LogPreferences
 
 
 class ModelCardParameters(BaseModel):
@@ -91,6 +90,7 @@ class ModelLoadRequest(BaseModel):
     prompt_template: Optional[str] = None
     num_experts_per_token: Optional[int] = None
     use_cfg: Optional[bool] = None
+    fasttensors: Optional[bool] = False
     draft: Optional[DraftModelLoadRequest] = None
 
 
